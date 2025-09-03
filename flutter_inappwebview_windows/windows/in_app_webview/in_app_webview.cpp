@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cstring>
 #include <filesystem>
 #include <nlohmann/json.hpp>
@@ -29,6 +30,170 @@
 namespace flutter_inappwebview_plugin
 {
   using namespace Microsoft::WRL;
+
+  // Helper function to convert custom scheme URL to virtual host URL
+  // Converts barm://host/path to http://barm.host/path for Windows compatibility
+  std::string convertCustomSchemeToVirtualHost(const std::string& customUrl)
+  {
+    if (customUrl.find("://") == std::string::npos) {
+      return customUrl; // Not a URL, return as-is
+    }
+    
+    size_t schemeEnd = customUrl.find("://");
+    std::string scheme = customUrl.substr(0, schemeEnd);
+    
+    // Only convert custom schemes (not http/https/file)
+    if (scheme == "http" || scheme == "https" || scheme == "file") {
+      return customUrl;
+    }
+    
+    std::string remainder = customUrl.substr(schemeEnd + 3);
+    
+    // Convert custom://host/path to http://custom-scheme.local/path
+    // Replace dots and colons in host with hyphens to create valid hostname
+    std::string cleanRemainder = remainder;
+    std::replace(cleanRemainder.begin(), cleanRemainder.end(), '.', '-');
+    std::replace(cleanRemainder.begin(), cleanRemainder.end(), ':', '-');
+    
+    std::string virtualUrl = "http://" + scheme + "-" + cleanRemainder;
+    
+    return virtualUrl;
+  }
+
+  // Helper function to convert virtual host URL back to custom scheme URL  
+  // Converts http://barm.host/path back to barm://host/path
+  std::string convertVirtualHostToCustomScheme(const std::string& virtualUrl)
+  {
+    if (!starts_with(virtualUrl, std::string("http://"))) {
+      return virtualUrl; // Not a virtual host URL, return as-is
+    }
+    
+    std::string remainder = virtualUrl.substr(7); // Remove "http://"
+    
+    // Look for pattern: scheme-host-path
+    if (!starts_with(remainder, std::string("barm-"))) {
+      return virtualUrl; // Not a barm virtual host URL
+    }
+    
+    // Extract the clean remainder after "barm-"
+    std::string cleanRemainder = remainder.substr(5); // Remove "barm-"
+    
+    // Convert hyphens back to dots and colons
+    std::string originalRemainder = cleanRemainder;
+    // First convert the IP address pattern (replace first 3 hyphens with dots)
+    size_t hyphenCount = 0;
+    for (size_t i = 0; i < originalRemainder.length() && hyphenCount < 3; ++i) {
+      if (originalRemainder[i] == '-') {
+        originalRemainder[i] = '.';
+        hyphenCount++;
+      }
+    }
+    
+    std::string customUrl = "barm://" + originalRemainder;
+    return customUrl;
+  }
+
+  // Helper function to process HTML content for virtual host navigation
+  // Converts relative paths to virtual host URLs
+  std::string processHtmlForVirtualHost(const std::string& htmlContent, const std::string& baseUrl)
+  {
+    std::string processedHtml = htmlContent;
+    
+    // Extract the base path from the base URL (e.g., "barm://43.163.85.80/app/cat-ears-mtls" -> "/app/cat-ears-mtls")
+    std::string basePath = "";
+    size_t schemeEnd = baseUrl.find("://");
+    if (schemeEnd != std::string::npos) {
+      size_t pathStart = baseUrl.find("/", schemeEnd + 3);
+      if (pathStart != std::string::npos) {
+        basePath = baseUrl.substr(pathStart);
+        // Remove trailing slash if present
+        if (basePath.length() > 1 && basePath.back() == '/') {
+          basePath.pop_back();
+        }
+      }
+    }
+    
+    if (basePath.empty()) {
+      basePath = "/";
+    }
+    
+    // Extract host from base URL (e.g., "barm://43.163.85.80/app/cat-ears-mtls" -> "barm://43.163.85.80")
+    std::string hostUrl = baseUrl;
+    if (schemeEnd != std::string::npos) {
+      size_t pathStart = baseUrl.find("/", schemeEnd + 3);
+      if (pathStart != std::string::npos) {
+        hostUrl = baseUrl.substr(0, pathStart);
+      }
+    }
+    
+    // Replace relative paths in script src attributes
+    std::regex scriptRegex(R"(<script[^>]*\ssrc=["']([^"']*)["'][^>]*>)");
+    std::sregex_iterator scriptBegin(processedHtml.begin(), processedHtml.end(), scriptRegex);
+    std::sregex_iterator scriptEnd;
+    
+    std::string result = "";
+    size_t lastPos = 0;
+    
+    for (std::sregex_iterator i = scriptBegin; i != scriptEnd; ++i) {
+      std::smatch match = *i;
+      
+      // Add text before the match
+      result += processedHtml.substr(lastPos, match.position() - lastPos);
+      
+      std::string originalTag = match[0].str();
+      std::string srcPath = match[1].str();
+      
+      // If the path starts with "/", it's an absolute path from the root
+      if (srcPath.front() == '/') {
+        std::string absoluteUrl = hostUrl + srcPath;
+        std::string newTag = std::regex_replace(originalTag, std::regex(R"(\s+src=["'][^"']*["'])"), " src=\"" + absoluteUrl + "\"");
+        result += newTag;
+      } else {
+        result += originalTag;
+      }
+      
+      lastPos = match.position() + match.length();
+    }
+    
+    // Add remaining text after the last match
+    result += processedHtml.substr(lastPos);
+    processedHtml = result;
+    
+    // Replace relative paths in link href attributes
+    std::regex linkRegex(R"(<link[^>]*\shref=["']([^"']*)["'][^>]*>)");
+    std::sregex_iterator linkBegin(processedHtml.begin(), processedHtml.end(), linkRegex);
+    std::sregex_iterator linkEnd;
+    
+    result = "";
+    lastPos = 0;
+    
+    for (std::sregex_iterator i = linkBegin; i != linkEnd; ++i) {
+      std::smatch match = *i;
+      
+      // Add text before the match
+      result += processedHtml.substr(lastPos, match.position() - lastPos);
+      
+      std::string originalTag = match[0].str();
+      std::string hrefPath = match[1].str();
+      
+      // If the path starts with "/", it's an absolute path from the root
+      if (hrefPath.front() == '/') {
+        std::string absoluteUrl = hostUrl + hrefPath;
+        std::string newTag = std::regex_replace(originalTag, std::regex(R"(\s+href=["'][^"']*["'])"), " href=\"" + absoluteUrl + "\"");
+        result += newTag;
+      } else {
+        result += originalTag;
+      }
+      
+      lastPos = match.position() + match.length();
+    }
+    
+    // Add remaining text after the last match
+    result += processedHtml.substr(lastPos);
+    processedHtml = result;
+    
+    return processedHtml;
+  }
 
   InAppWebView::InAppWebView(const FlutterInappwebviewWindowsPlugin* plugin, const InAppWebViewCreationParams& params, const HWND parentWindow, wil::com_ptr<ICoreWebView2Environment> webViewEnv,
     wil::com_ptr<ICoreWebView2Controller> webViewController,
@@ -871,6 +1036,10 @@ namespace flutter_inappwebview_plugin
     failedLog(add_PermissionRequested_HResult);
 
     failedLog(webView->AddWebResourceRequestedFilter(L"*", COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL));
+    
+    // Add specific filter for virtual host URLs to ensure they are captured
+    failedLog(webView->AddWebResourceRequestedFilter(L"http://barm-*", COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL));
+    
     auto add_WebResourceRequested_HResult = webView->add_WebResourceRequested(
       Callback<ICoreWebView2WebResourceRequestedEventHandler>(
         [this](
@@ -885,11 +1054,29 @@ namespace flutter_inappwebview_plugin
             // This is also raised for registered custom URI schemes.
             // https://learn.microsoft.com/en-us/microsoft-edge/webview2/reference/win32/icorewebview2?view=webview2-1.0.2792.45#add_webresourcerequested
             auto url = request->url.has_value() ? request->url.value() : "";
-            auto isCustomScheme = !url.empty() && !starts_with(url, std::string{ "file://" }) && !starts_with(url, std::string{ "http://" }) && !starts_with(url, std::string{ "https://" });
-
-            auto onLoadResourceWithCustomSchemeCallback = [this, deferral, request, args]()
+            
+            // Check if this is a virtual host URL that should be converted back to custom scheme
+            bool isVirtualHostUrl = starts_with(url, std::string("http://barm-"));
+            bool isCustomScheme = isVirtualHostUrl || (!url.empty() && !starts_with(url, std::string("file://")) && !starts_with(url, std::string("http://")) && !starts_with(url, std::string("https://")));
+            
+            auto onLoadResourceWithCustomSchemeCallback = [this, deferral, request, args, isVirtualHostUrl]()
               {
                 if (channelDelegate) {
+                  // Create a modified request with converted URL if it's a virtual host URL
+                  auto modifiedRequest = request;
+                  if (isVirtualHostUrl && request->url.has_value()) {
+                    std::string originalUrl = request->url.value();
+                    std::string convertedUrl = convertVirtualHostToCustomScheme(originalUrl);
+                    
+                    // Create a new request with converted URL
+                    modifiedRequest = std::make_shared<WebResourceRequest>(
+                      std::optional<std::string>(convertedUrl),
+                      request->method,
+                      request->headers,
+                      request->isForMainFrame
+                    );
+                  }
+                  
                   auto callback = std::make_unique<WebViewChannelDelegate::LoadResourceWithCustomSchemeCallback>();
                   auto defaultBehaviour = [this, deferral, args](const std::optional<std::shared_ptr<CustomSchemeResponse>> response)
                     {
@@ -907,7 +1094,7 @@ namespace flutter_inappwebview_plugin
                       debugLog(error_code + ", " + error_message);
                       defaultBehaviour(std::nullopt);
                     };
-                  channelDelegate->onLoadResourceWithCustomScheme(request, std::move(callback));
+                  channelDelegate->onLoadResourceWithCustomScheme(modifiedRequest, std::move(callback));
                 }
                 else {
                   failedLog(deferral->Complete());
@@ -950,6 +1137,8 @@ namespace flutter_inappwebview_plugin
             else {
               failedLog(deferral->Complete());
             }
+          } else {
+            debugLog("📋 WebResourceRequested - Failed to get request or deferral, or no channelDelegate");
           }
           return S_OK;
         }
@@ -1464,6 +1653,21 @@ namespace flutter_inappwebview_plugin
     }
 
     std::wstring url = utf8_to_wide(urlRequest->url.value());
+    std::string urlStr = urlRequest->url.value();
+    
+    // Check if this is a custom scheme
+    bool isCustomScheme = !urlStr.empty() && !starts_with(urlStr, std::string{ "file://" }) && !starts_with(urlStr, std::string{ "http://" }) && !starts_with(urlStr, std::string{ "https://" });
+    if (isCustomScheme) {
+      // Convert custom scheme URL to virtual host URL for WebView2 navigation
+      std::string virtualHostUrl = convertCustomSchemeToVirtualHost(urlStr);
+      
+      // Navigate to the virtual host URL instead of using data URL
+      std::wstring wideVirtualUrl = utf8_to_wide(virtualHostUrl);
+      webView->Navigate(wideVirtualUrl.c_str());
+      
+      // The actual resource loading will be handled by WebResourceRequested event
+      return;
+    }
 
     wil::com_ptr<ICoreWebView2Environment2> webViewEnv2;
     wil::com_ptr<ICoreWebView2_2> webView2;
