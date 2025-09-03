@@ -166,15 +166,6 @@ namespace flutter_inappwebview_plugin
           auto inAppWebView = std::make_unique<InAppWebView>(plugin, params, hwnd, std::move(webViewEnv), std::move(webViewController), std::move(webViewCompositionController));
 
           std::optional<std::shared_ptr<URLRequest>> urlRequest = urlRequestMap.has_value() ? std::make_shared<URLRequest>(urlRequestMap.value()) : std::optional<std::shared_ptr<URLRequest>>{};
-          if (urlRequest.has_value()) {
-            inAppWebView->loadUrl(urlRequest.value());
-          }
-          else if (initialFile.has_value()) {
-            inAppWebView->loadFile(initialFile.value());
-          }
-          else if (initialDataMap.has_value()) {
-            inAppWebView->loadData(get_fl_map_value<std::string>(initialDataMap.value(), "data"));
-          }
 
           if (windowId.has_value() && map_contains(windowWebViews, windowId.value())) {
             auto windowWebViewArgs = windowWebViews.at(windowId.value()).get();
@@ -192,14 +183,40 @@ namespace flutter_inappwebview_plugin
 
           auto textureId = customPlatformView->texture_id();
 
+          // Initialize channel BEFORE calling loadUrl to ensure channelDelegate is available
           if (keepAliveId.has_value()) {
             customPlatformView->view->initChannel(keepAliveId.value(), std::nullopt);
+            
+            // Call loadUrl before moving the object
+            if (urlRequest.has_value()) {
+              customPlatformView->view->loadUrl(urlRequest.value());
+            }
+            else if (initialFile.has_value()) {
+              customPlatformView->view->loadFile(initialFile.value());
+            }
+            else if (initialDataMap.has_value()) {
+              customPlatformView->view->loadData(get_fl_map_value<std::string>(initialDataMap.value(), "data"));
+            }
+            
             keepAliveWebViews.insert({ keepAliveId.value(), std::move(customPlatformView) });
           }
           else {
             customPlatformView->view->initChannel(textureId, std::nullopt);
+            
+            // Call loadUrl before moving the object
+            if (urlRequest.has_value()) {
+              customPlatformView->view->loadUrl(urlRequest.value());
+            }
+            else if (initialFile.has_value()) {
+              customPlatformView->view->loadFile(initialFile.value());
+            }
+            else if (initialDataMap.has_value()) {
+              customPlatformView->view->loadData(get_fl_map_value<std::string>(initialDataMap.value(), "data"));
+            }
+            
             webViews.insert({ textureId, std::move(customPlatformView) });
           }
+          
           result_->Success(textureId);
         }
         else {
