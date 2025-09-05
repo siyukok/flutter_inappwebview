@@ -520,6 +520,31 @@ namespace flutter_inappwebview_plugin
       ).Get(), nullptr);
     failedLog(add_ZoomFactorChanged_HResult);
 
+    // Add focus event handlers to better manage focus state
+    auto add_GotFocus_HResult = webViewController->add_GotFocus(
+      Callback<ICoreWebView2FocusChangedEventHandler>(
+        [this](ICoreWebView2Controller* sender, IUnknown* args)
+        {
+          if (channelDelegate) {
+            channelDelegate->onWindowFocus();
+          }
+          return S_OK;
+        }
+      ).Get(), nullptr);
+    failedLog(add_GotFocus_HResult);
+
+    auto add_LostFocus_HResult = webViewController->add_LostFocus(
+      Callback<ICoreWebView2FocusChangedEventHandler>(
+        [this](ICoreWebView2Controller* sender, IUnknown* args)
+        {
+          if (channelDelegate) {
+            channelDelegate->onWindowBlur();
+          }
+          return S_OK;
+        }
+      ).Get(), nullptr);
+    failedLog(add_LostFocus_HResult);
+
     wil::com_ptr<ICoreWebView2DevToolsProtocolEventReceiver> fetchRequestPausedEventReceiver;
     if (succeededOrLog(webView->GetDevToolsProtocolEventReceiver(L"Fetch.requestPaused", &fetchRequestPausedEventReceiver))) {
       auto add_DevToolsProtocolEventReceived_HResult = fetchRequestPausedEventReceiver->add_DevToolsProtocolEventReceived(
@@ -2527,6 +2552,23 @@ namespace flutter_inappwebview_plugin
   double InAppWebView::getZoomScale() const
   {
     return zoomScaleFactor_;
+  }
+
+  void InAppWebView::setFocusState(bool focused)
+  {
+    if (!webViewController) {
+      return;
+    }
+
+    // Set WebView visibility and focus based on Flutter focus state
+    if (focused) {
+      webViewController->put_IsVisible(true);
+      // Try to move focus to the WebView
+      webViewController->MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);
+    } else {
+      // When losing focus, we don't hide the WebView but just move focus away
+      // This helps maintain visual consistency while handling focus properly
+    }
   }
 
   // flutter_view

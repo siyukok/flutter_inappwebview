@@ -332,6 +332,15 @@ namespace flutter_inappwebview_plugin
         return result->Success();
       }
     }
+    else if (method_name.compare("setFocusState") == 0) {
+      if (const auto focused = std::get_if<bool>(method_call.arguments())) {
+        if (view) {
+          view->setFocusState(*focused);
+          return result->Success();
+        }
+      }
+      return result->Error(kErrorInvalidArgs);
+    }
 
     result->NotImplemented();
   }

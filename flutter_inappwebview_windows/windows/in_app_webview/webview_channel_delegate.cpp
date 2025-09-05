@@ -642,6 +642,22 @@ namespace flutter_inappwebview_plugin
     channel->InvokeMethod("onZoomScaleChanged", std::move(arguments));
   }
 
+  void WebViewChannelDelegate::onWindowFocus() const
+  {
+    if (!channel) {
+      return;
+    }
+    channel->InvokeMethod("onWindowFocus", nullptr);
+  }
+
+  void WebViewChannelDelegate::onWindowBlur() const
+  {
+    if (!channel) {
+      return;
+    }
+    channel->InvokeMethod("onWindowBlur", nullptr);
+  }
+
   WebViewChannelDelegate::~WebViewChannelDelegate()
   {
     debugLog("dealloc WebViewChannelDelegate");

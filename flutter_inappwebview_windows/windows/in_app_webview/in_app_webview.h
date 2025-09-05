@@ -180,6 +180,7 @@ namespace flutter_inappwebview_plugin
     void clearSslPreferences(const std::function<void()> completionHandler) const;
     bool isInterfaceSupported(const std::string& interfaceName) const;
     double getZoomScale() const;
+    void setFocusState(bool focused);
 
     std::string pageFrameId() const
     {

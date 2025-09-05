@@ -240,6 +240,15 @@ class CustomPlatformViewController
     return _methodChannel
         .invokeMethod('setPosition', [position.dx, position.dy, scaleFactor]);
   }
+
+  /// Sets the focus state for the WebView
+  Future<void> _setFocusState(bool focused) async {
+    if (_isDisposed) {
+      return;
+    }
+    assert(value.isInitialized);
+    return _methodChannel.invokeMethod('setFocusState', focused);
+  }
 }
 
 class CustomPlatformView extends StatefulWidget {
@@ -334,7 +343,12 @@ class _CustomPlatformViewState extends State<CustomPlatformView>
       focusNode: _focusNode,
       canRequestFocus: true,
       debugLabel: "flutter_inappwebview_windows_custom_platform_view",
-      onFocusChange: (focused) {},
+      onFocusChange: (focused) {
+        // Notify WebView about focus state changes
+        if (_controller.value.isInitialized) {
+          _controller._setFocusState(focused);
+        }
+      },
       child: SizedBox.expand(key: _key, child: _buildInner()),
     );
   }
@@ -362,11 +376,20 @@ class _CustomPlatformViewState extends State<CustomPlatformView>
                       _reportSurfaceSize();
                       _reportWidgetPosition();
 
+                      // Improved focus handling for better WebView interaction
                       if (!_focusNode.hasFocus) {
                         _focusNode.requestFocus();
-                        Future.delayed(const Duration(milliseconds: 50), () {
+                        // Use a more reliable focus retry mechanism
+                        Future.delayed(const Duration(milliseconds: 16), () {
                           if (!_focusNode.hasFocus) {
                             _focusNode.requestFocus();
+                            // Additional retry for stubborn cases
+                            Future.delayed(const Duration(milliseconds: 32),
+                                () {
+                              if (!_focusNode.hasFocus) {
+                                _focusNode.requestFocus();
+                              }
+                            });
                           }
                         });
                       }
